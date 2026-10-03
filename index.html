@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AeroGuard - Multi-Trainee Hub & ESP32 Live Telemetry</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    @keyframes pulse-fast {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.2; }
+    }
+    .pulse-danger {
+      animation: pulse-fast 0.6s infinite;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans flex flex-col">
+
+  <!-- TOP NAVIGATION HEADER -->
+  <header class="bg-slate-900 border-b border-slate-800 px-6 py-3.5 flex flex-wrap justify-between items-center sticky top-0 z-50">
+    <div class="flex items-center space-x-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-600 to-blue-500 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20 text-lg">
+        AG
+      </div>
+      <div>
+        <h1 class="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+          AeroGuard
+        </h1>
+        <p class="text-xs text-slate-400">Classroom Multi-Trainee Hub | ESP32 Wi-Fi & SoftAP Telemetry</p>
+      </div>
+    </div>
+
+    <!-- Wi-Fi Connection Bar & Controls -->
+    <div class="flex items-center gap-3 text-sm mt-2 lg:mt-0 flex-wrap">
+      <!-- Wi-Fi Status Pill -->
+      <div class="flex items-center gap-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
+        <span id="wifiDot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+        <span id="wifiStatusText" class="text-xs font-semibold text-slate-300">ESP32 SoftAP (192.168.4.1)</span>
+      </div>
+
+      <!-- IP / WebSocket Input -->
+      <div class="flex items-center bg-slate-800/80 rounded-lg border border-slate-700 overflow-hidden">
+        <span class="text-xs text-slate-400 pl-2.5 pr-1 font-mono">ws://</span>
+        <input id="wsUrlInput" type="text" value="localhost:8181" placeholder="IP:Port" class="bg-transparent text-xs text-cyan-300 py-1.5 px-1 font-mono w-28 outline-none" />
+        <button id="connectWsBtn" class="bg-cyan-700 hover:bg-cyan-600 text-white text-xs px-2.5 py-1.5 font-medium transition">
+          Connect
+        </button>
+      </div>
+
+      <!-- Simulator Fallback Toggle -->
+      <button id="simToggleBtn" class="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 text-white font-medium text-xs rounded-lg shadow-md transition flex items-center gap-1.5">
+        <i data-lucide="play" class="w-3.5 h-3.5"></i>
+        <span id="simBtnText">Pause Simulator</span>
+      </button>
+
+      <!-- CSV Export -->
+      <button id="exportCsvBtn" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium text-xs rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+        <i data-lucide="download" class="w-3.5 h-3.5"></i> Export
+      </button>
+    </div>
+  </header>
+
+  <!-- MULTI-TRAINEE CLASSROOM ROSTER (NEW) -->
+  <section class="bg-slate-900/60 border-b border-slate-800 px-6 py-3">
+    <div class="max-w-7xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div class="flex items-center gap-2">
+        <i data-lucide="users" class="w-4 h-4 text-cyan-400"></i>
+        <span class="text-xs font-bold text-slate-300 uppercase tracking-wider">Active Classroom Trainees (4 Units):</span>
+      </div>
+
+      <!-- Trainee Cards Grid -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 flex-1 md:max-w-4xl" id="traineeCardsContainer">
+        <!-- Generated dynamically via JS -->
+      </div>
+    </div>
+  </section>
+
+  <!-- MAIN DASHBOARD CONTENT -->
+  <main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-7xl mx-auto w-full">
+
+    <!-- TOP TELEMETRY CARDS (Span 12) -->
+    <div class="lg:col-span-12 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+      <!-- Gas Level Card -->
+      <div class="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-md">
+        <div class="flex justify-between items-start mb-2">
+          <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">MQ-6 Gas Level</span>
+          <span id="gasPill" class="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800">SAFE</span>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="liveGasVal" class="text-3xl font-extrabold text-white">450</span>
+          <span class="text-xs text-slate-400">ADC (12-bit)</span>
+        </div>
+        <div class="w-full bg-slate-800 rounded-full h-2 mt-3 overflow-hidden">
+          <div id="gasProgressBar" class="bg-emerald-500 h-2 rounded-full transition-all duration-300" style="width: 10%"></div>
+        </div>
+      </div>
+
+      <!-- Edge AI Classification -->
+      <div class="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-md">
+        <div class="flex justify-between items-start mb-2">
+          <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Edge AI Decision</span>
+          <i data-lucide="cpu" class="w-4 h-4 text-cyan-400"></i>
+        </div>
+        <div id="aiStateDisplay" class="text-xl font-bold text-emerald-400 mt-1">SAFE AMBIENT</div>
+        <p id="aiStateDetail" class="text-xs text-slate-400 mt-2">Zero anomalous combustible gas detected</p>
+      </div>
+
+      <!-- Localization Zone -->
+      <div class="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-md">
+        <div class="flex justify-between items-start mb-2">
+          <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">Probable Leak Zone</span>
+          <i data-lucide="map-pin" class="w-4 h-4 text-amber-400"></i>
+        </div>
+        <div id="probZoneDisplay" class="text-xl font-bold text-white mt-1">Pipe Segment Clear</div>
+        <p class="text-xs text-slate-400 mt-2">Correlated via scan dwell & response gradient</p>
+      </div>
+
+      <!-- Scan Speed & Discipline -->
+      <div class="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-md">
+        <div class="flex justify-between items-start mb-2">
+          <span class="text-xs font-medium text-slate-400 uppercase tracking-wider">MPU6050 Motion</span>
+          <span id="scanStatusBadge" class="text-xs px-2 py-0.5 rounded-full font-semibold bg-cyan-950 text-cyan-400 border border-cyan-800">OPTIMAL</span>
+        </div>
+        <div class="flex items-baseline gap-2">
+          <span id="liveGyroVal" class="text-3xl font-extrabold text-white">18.4</span>
+          <span class="text-xs text-slate-400">deg/sec</span>
+        </div>
+        <p id="scanSpeedPrompt" class="text-xs text-emerald-400 mt-2">✓ Steady sweep pace maintained</p>
+      </div>
+    </div>
+
+    <!-- HIGH HAZARD ALERT OVERRIDE BANNER -->
+    <div id="hazardBanner" class="lg:col-span-12 hidden bg-red-950/80 border-2 border-red-600 rounded-2xl p-4 flex items-center justify-between shadow-2xl pulse-danger">
+      <div class="flex items-center gap-3">
+        <div class="p-2.5 rounded-xl bg-red-600 text-white">
+          <i data-lucide="alert-triangle" class="w-7 h-7"></i>
+        </div>
+        <div>
+          <h3 class="text-lg font-black text-red-100 tracking-wide">CRITICAL SAFETY ALERT: HIGH HAZARD THRESHOLD EXCEEDED</h3>
+          <p class="text-xs text-red-200">Wearable is actively sounding continuous buzzer & haptic feedback. Directive: <b>STOP APPROACH & EVACUATE TO SAFE ZONE</b>.</p>
+        </div>
+      </div>
+      <div class="px-4 py-2 bg-red-700/60 rounded-xl border border-red-500 text-white font-bold text-xs uppercase tracking-wider">
+        Emergency Cutoff
+      </div>
+    </div>
+
+    <!-- LEFT COLUMN: LIVE TELEMETRY CHARTS (Span 8) -->
+    <div class="lg:col-span-8 flex flex-col gap-6">
+      <!-- Gas Trend Chart -->
+      <div class="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-md">
+        <div class="flex justify-between items-center mb-4">
+          <div>
+            <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+              <i data-lucide="activity" class="w-4 h-4 text-cyan-400"></i>
+              Realtime Gas Response & Baseline Tracking
+            </h2>
+            <p class="text-xs text-slate-400">Monitoring Selected Trainee: <span id="currentTraineeLabel" class="text-cyan-400 font-semibold">Trainee 1 (Rajesh Kumar)</span></p>
+          </div>
+          <div class="flex gap-2 text-xs">
+            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-cyan-400"></span> Filtered Gas</span>
+            <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-amber-400"></span> Ambient Baseline</span>
+          </div>
+        </div>
+        <div class="h-64 w-full">
+          <canvas id="gasChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Joint Scan Spatial Sequence (Pipe Joints A -> B -> C -> D -> E) -->
+      <div class="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-md">
+        <h2 class="text-sm font-bold text-white uppercase tracking-wider mb-2 flex items-center gap-2">
+          <i data-lucide="git-commit" class="w-4 h-4 text-indigo-400"></i>
+          Pipe Joint Inspection & Trend Localization Track
+        </h2>
+        <p class="text-xs text-slate-400 mb-5">Trainee dwell and peak gas exposure measured at consecutive test joints:</p>
+        
+        <div class="grid grid-cols-5 gap-3">
+          <!-- Joint A -->
+          <div id="jointA" class="bg-slate-800/80 rounded-xl p-3 border border-slate-700 flex flex-col items-center text-center transition-all duration-300">
+            <span class="text-xs font-semibold text-slate-400">Joint A (Flange)</span>
+            <span class="text-lg font-bold text-white mt-1" id="jointAVal">460</span>
+            <span class="text-[10px] text-emerald-400 mt-1">Normal</span>
+          </div>
+          <!-- Joint B -->
+          <div id="jointB" class="bg-slate-800/80 rounded-xl p-3 border border-slate-700 flex flex-col items-center text-center transition-all duration-300">
+            <span class="text-xs font-semibold text-slate-400">Joint B (Coupler)</span>
+            <span class="text-lg font-bold text-white mt-1" id="jointBVal">590</span>
+            <span class="text-[10px] text-cyan-400 mt-1">+130 Δ</span>
+          </div>
+          <!-- Joint C -->
+          <div id="jointC" class="bg-slate-800/80 rounded-xl p-3 border border-slate-700 flex flex-col items-center text-center transition-all duration-300">
+            <span class="text-xs font-semibold text-slate-400">Joint C (Elbow)</span>
+            <span class="text-lg font-bold text-white mt-1" id="jointCVal">1,240</span>
+            <span class="text-[10px] text-amber-400 mt-1">Gas Rise</span>
+          </div>
+          <!-- Joint D (LEAK SOURCE) -->
+          <div id="jointD" class="bg-slate-800/80 rounded-xl p-3 border-2 border-slate-700 flex flex-col items-center text-center transition-all duration-300 relative">
+            <div id="jointDPeakBadge" class="hidden absolute -top-2.5 bg-red-600 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded-full uppercase tracking-tighter">PEAK LEAK</div>
+            <span class="text-xs font-bold text-slate-300">Joint D (T-Valve)</span>
+            <span class="text-lg font-black text-white mt-1" id="jointDVal">2,850</span>
+            <span class="text-[10px] text-red-400 mt-1 font-semibold" id="jointDStatus">Leak Center</span>
+          </div>
+          <!-- Joint E -->
+          <div id="jointE" class="bg-slate-800/80 rounded-xl p-3 border border-slate-700 flex flex-col items-center text-center transition-all duration-300">
+            <span class="text-xs font-semibold text-slate-400">Joint E (End Cap)</span>
+            <span class="text-lg font-bold text-white mt-1" id="jointEVal">620</span>
+            <span class="text-[10px] text-cyan-400 mt-1">Receding</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT COLUMN: TRAINER ASSESSMENT & NSQF 100-POINT SCORING (Span 4) -->
+    <div class="lg:col-span-4 flex flex-col gap-6">
+      <div class="bg-slate-900/90 rounded-2xl p-5 border border-slate-800 shadow-md flex flex-col h-full">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+            <i data-lucide="award" class="w-4 h-4 text-amber-400"></i>
+            NSQF Skill Assessment
+          </h2>
+          <span class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">100 Pts Rubric</span>
+        </div>
+
+        <!-- Overall Score Ring / Badge -->
+        <div class="flex items-center justify-between p-4 bg-slate-800/60 rounded-xl border border-slate-700/80 mb-5">
+          <div>
+            <div class="text-xs text-slate-400 font-medium">TOTAL COMPETENCY SCORE</div>
+            <div class="text-3xl font-black text-cyan-400 mt-0.5"><span id="totalScoreVal">92</span><span class="text-lg font-normal text-slate-400">/100</span></div>
+          </div>
+          <div id="competencyBadge" class="px-3 py-1.5 rounded-lg bg-emerald-950 border border-emerald-600 text-emerald-300 font-bold text-xs uppercase tracking-wider">
+            PASS (COMPETENT)
+          </div>
+        </div>
+
+        <!-- Itemized Rubric List -->
+        <div class="space-y-3.5 flex-1 text-xs">
+          <!-- Metric 1: Time to Locate (25 pts) -->
+          <div>
+            <div class="flex justify-between font-semibold mb-1">
+              <span class="text-slate-300">Time to Locate Leak Zone</span>
+              <span class="text-cyan-400" id="m1Score">23 / 25 pts</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-1.5">
+              <div id="m1Bar" class="bg-cyan-500 h-1.5 rounded-full" style="width: 92%"></div>
+            </div>
+          </div>
+
+          <!-- Metric 2: Correct Leak-Zone ID (15 pts) -->
+          <div>
+            <div class="flex justify-between font-semibold mb-1">
+              <span class="text-slate-300">Correct Zone Identification</span>
+              <span class="text-cyan-400" id="m2Score">15 / 15 pts</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-1.5">
+              <div id="m2Bar" class="bg-cyan-500 h-1.5 rounded-full" style="width: 100%"></div>
+            </div>
+          </div>
+
+          <!-- Metric 3: Joint Coverage (20 pts) -->
+          <div>
+            <div class="flex justify-between font-semibold mb-1">
+              <span class="text-slate-300">Joint Coverage & Dwell Discipline</span>
+              <span class="text-cyan-400" id="m3Score">18 / 20 pts</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-1.5">
+              <div id="m3Bar" class="bg-cyan-500 h-1.5 rounded-full" style="width: 90%"></div>
+            </div>
+          </div>
+
+          <!-- Metric 4: Scan-Speed Discipline (20 pts) -->
+          <div>
+            <div class="flex justify-between font-semibold mb-1">
+              <span class="text-slate-300">Scan-Speed Discipline</span>
+              <span class="text-cyan-400" id="m4Score">18 / 20 pts</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-1.5">
+              <div id="m4Bar" class="bg-cyan-500 h-1.5 rounded-full" style="width: 90%"></div>
+            </div>
+          </div>
+
+          <!-- Metric 5: Probe Steadiness (10 pts) -->
+          <div>
+            <div class="flex justify-between font-semibold mb-1">
+              <span class="text-slate-300">Probe Steadiness & Orientation</span>
+              <span class="text-cyan-400" id="m5Score">9 / 10 pts</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-1.5">
+              <div id="m5Bar" class="bg-cyan-500 h-1.5 rounded-full" style="width: 90%"></div>
+            </div>
+          </div>
+
+          <!-- Metric 6: Safe Response to High Hazard (10 pts) -->
+          <div>
+            <div class="flex justify-between font-semibold mb-1">
+              <span class="text-slate-300">Safe Response to HIGH HAZARD</span>
+              <span class="text-cyan-400" id="m6Score">9 / 10 pts</span>
+            </div>
+            <div class="w-full bg-slate-800 rounded-full h-1.5">
+              <div id="m6Bar" class="bg-cyan-500 h-1.5 rounded-full" style="width: 90%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Critical Fail Safety Notice -->
+        <div class="mt-4 p-3 bg-slate-800/80 rounded-xl border border-slate-700 text-[11px] text-slate-400">
+          <b class="text-amber-400">Safety Rule:</b> Trainee approach past High Hazard triggers instant <span class="text-red-400 font-bold">"Not Yet Competent"</span> regardless of point total.
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    // ==========================================
+    // MULTI-TRAINEE STATE DATABASE
+    // ==========================================
+    const trainees = [
+      {
+        id: "T1",
+        name: "Rajesh Kumar",
+        batch: "ITI-04 (Plumbing)",
+        ip: "192.168.4.1",
+        state: "LEAK SUSPECTED",
+        gas: 1980,
+        score: 92,
+        status: "COMPETENT",
+        m1: 23, m2: 15, m3: 18, m4: 18, m5: 9, m6: 9,
+        active: true
+      },
+      {
+        id: "T2",
+        name: "Pooja Sharma",
+        batch: "ITI-04 (Gas Fitting)",
+        ip: "192.168.4.2",
+        state: "SAFE",
+        gas: 460,
+        score: 96,
+        status: "COMPETENT",
+        m1: 25, m2: 15, m3: 19, m4: 19, m5: 9, m6: 9,
+        active: false
+      },
+      {
+        id: "T3",
+        name: "Amit Verma",
+        batch: "ITI-02 (Industrial)",
+        ip: "192.168.4.3",
+        state: "GAS DETECTED",
+        gas: 820,
+        score: 84,
+        status: "COMPETENT",
+        m1: 20, m2: 15, m3: 16, m4: 16, m5: 8, m6: 9,
+        active: false
+      },
+      {
+        id: "T4",
+        name: "Vikas Patil",
+        batch: "ITI-02 (Plumbing)",
+        ip: "192.168.4.4",
+        state: "HIGH HAZARD",
+        gas: 2950,
+        score: 55,
+        status: "CRITICAL FAIL",
+        m1: 18, m2: 10, m3: 12, m4: 10, m5: 5, m6: 0,
+        active: false
+      }
+    ];
+
+    let selectedTraineeId = "T1";
+
+    // Render Trainee Cards in top roster
+    const container = document.getElementById("traineeCardsContainer");
+    function renderTraineeCards() {
+      container.innerHTML = "";
+      trainees.forEach(t => {
+        const isSelected = t.id === selectedTraineeId;
+        const card = document.createElement("div");
+        card.className = `p-2.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between ${
+          isSelected 
+            ? "bg-slate-800 border-cyan-500 shadow-md shadow-cyan-500/10 ring-1 ring-cyan-500" 
+            : "bg-slate-900/90 border-slate-800 hover:border-slate-700"
+        }`;
+        
+        let stateBadgeColor = "bg-emerald-950 text-emerald-400 border-emerald-800";
+        if (t.state === "GAS DETECTED") stateBadgeColor = "bg-yellow-950 text-yellow-400 border-yellow-800";
+        if (t.state === "LEAK SUSPECTED") stateBadgeColor = "bg-orange-950 text-orange-400 border-orange-800";
+        if (t.state === "HIGH HAZARD") stateBadgeColor = "bg-red-950 text-red-400 border-red-800 pulse-danger";
+
+        card.innerHTML = `
+          <div class="flex justify-between items-start mb-1">
+            <span class="text-xs font-bold ${isSelected ? 'text-cyan-300' : 'text-slate-300'}">${t.name}</span>
+            <span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${stateBadgeColor}">${t.state}</span>
+          </div>
+          <div class="flex justify-between items-center text-[10px] text-slate-400">
+            <span>Unit: ${t.id} (${t.ip})</span>
+            <span class="font-extrabold ${t.score >= 80 ? 'text-emerald-400' : 'text-red-400'}">${t.score}/100</span>
+          </div>
+        `;
+
+        card.addEventListener("click", () => {
+          selectTrainee(t.id);
+        });
+
+        container.appendChild(card);
+      });
+    }
+
+    function selectTrainee(id) {
+      selectedTraineeId = id;
+      const t = trainees.find(x => x.id === id);
+      if (!t) return;
+
+      document.getElementById("currentTraineeLabel").textContent = `${t.id} (${t.name})`;
+      document.getElementById("wsUrlInput").value = `${t.ip}:81`;
+      
+      // Update Rubric Scores
+      document.getElementById("totalScoreVal").textContent = t.score;
+      const badge = document.getElementById("competencyBadge");
+      if (t.status === "COMPETENT") {
+        badge.className = "px-3 py-1.5 rounded-lg bg-emerald-950 border border-emerald-600 text-emerald-300 font-bold text-xs uppercase tracking-wider";
+        badge.textContent = "PASS (COMPETENT)";
+      } else {
+        badge.className = "px-3 py-1.5 rounded-lg bg-red-950 border border-red-600 text-red-300 font-bold text-xs uppercase tracking-wider";
+        badge.textContent = "CRITICAL FAIL";
+      }
+
+      document.getElementById("m1Score").textContent = `${t.m1} / 25 pts`;
+      document.getElementById("m2Score").textContent = `${t.m2} / 15 pts`;
+      document.getElementById("m3Score").textContent = `${t.m3} / 20 pts`;
+      document.getElementById("m4Score").textContent = `${t.m4} / 20 pts`;
+      document.getElementById("m5Score").textContent = `${t.m5} / 10 pts`;
+      document.getElementById("m6Score").textContent = `${t.m6} / 10 pts`;
+
+      document.getElementById("m1Bar").style.width = `${(t.m1/25)*100}%`;
+      document.getElementById("m2Bar").style.width = `${(t.m2/15)*100}%`;
+      document.getElementById("m3Bar").style.width = `${(t.m3/20)*100}%`;
+      document.getElementById("m4Bar").style.width = `${(t.m4/20)*100}%`;
+      document.getElementById("m5Bar").style.width = `${(t.m5/10)*100}%`;
+      document.getElementById("m6Bar").style.width = `${(t.m6/10)*100}%`;
+
+      renderTraineeCards();
+    }
+
+    renderTraineeCards();
+
+    // ==========================================
+    // CHART SETUP
+    // ==========================================
+    const ctx = document.getElementById('gasChart').getContext('2d');
+    const maxPoints = 30;
+    const labels = Array.from({length: maxPoints}, (_, i) => `${i}s`);
+    const initialGas = Array(maxPoints).fill(450);
+    const initialBase = Array(maxPoints).fill(450);
+
+    const gasChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            label: 'Filtered Gas ADC',
+            data: initialGas,
+            borderColor: '#22d3ee',
+            backgroundColor: 'rgba(34, 211, 238, 0.1)',
+            borderWidth: 2.5,
+            tension: 0.3,
+            fill: true,
+            pointRadius: 2
+          },
+          {
+            label: 'Ambient Baseline',
+            data: initialBase,
+            borderColor: '#fbbf24',
+            borderWidth: 1.5,
+            borderDash: [5, 5],
+            pointRadius: 0,
+            fill: false
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            grid: { color: 'rgba(51, 65, 85, 0.3)' },
+            ticks: { color: '#94a3b8', font: { size: 10 } }
+          },
+          y: {
+            min: 300,
+            max: 3500,
+            grid: { color: 'rgba(51, 65, 85, 0.3)' },
+            ticks: { color: '#94a3b8', font: { size: 10 } }
+          }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+
+    // ==========================================
+    // WEBSOCKET CLIENT (REAL ESP32 CONNECTION)
+    // ==========================================
+    let socket = null;
+    const wifiDot = document.getElementById("wifiDot");
+    const wifiStatusText = document.getElementById("wifiStatusText");
+    const connectWsBtn = document.getElementById("connectWsBtn");
+
+    function connectWebSocket(ipPort) {
+      if (socket) {
+        socket.close();
+      }
+
+      wifiStatusText.textContent = `Connecting to ws://${ipPort}...`;
+      wifiDot.className = "w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse";
+
+      try {
+        socket = new WebSocket(`ws://${ipPort}`);
+        
+        socket.onopen = () => {
+          wifiStatusText.textContent = `ESP32 Connected: ${ipPort}`;
+          wifiDot.className = "w-2.5 h-2.5 rounded-full bg-emerald-400";
+          console.log("[WS] Connected to ESP32 Wearable");
+          // Stop simulated feed if real hardware sends data
+          if (isRunning) simToggleBtn.click();
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            applyTelemetryData(data.gas, data.gyro || 15.0, data.state, data.zone || "Scanned Pipe");
+          } catch(e) {
+            console.error("Invalid WS packet", e);
+          }
+        };
+
+        socket.onerror = () => {
+          wifiStatusText.textContent = `Hardware Offline (Fallback to Sim)`;
+          wifiDot.className = "w-2.5 h-2.5 rounded-full bg-slate-500";
+        };
+
+        socket.onclose = () => {
+          wifiStatusText.textContent = `SoftAP (192.168.4.1) Ready`;
+          wifiDot.className = "w-2.5 h-2.5 rounded-full bg-slate-500";
+        };
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
+    connectWsBtn.addEventListener("click", () => {
+      const url = document.getElementById("wsUrlInput").value.trim();
+      connectWebSocket(url);
+    });
+
+    // ==========================================
+    // TELEMETRY & SIMULATOR LOGIC
+    // ==========================================
+    let isRunning = false;
+    let timerId = null;
+    let simStep = 0;
+
+    const scanSequence = [
+      { gas: 450, gyro: 18, state: 'SAFE', zone: 'Joint A (Ambient)' },
+      { gas: 460, gyro: 8,  state: 'SAFE', zone: 'Joint A Dwell' },
+      { gas: 520, gyro: 22, state: 'SAFE', zone: 'Moving A->B' },
+      { gas: 590, gyro: 7,  state: 'SAFE', zone: 'Joint B Dwell' },
+      { gas: 820, gyro: 20, state: 'GAS DETECTED', zone: 'Approaching Joint C' },
+      { gas: 1240, gyro: 6, state: 'GAS DETECTED', zone: 'Joint C Dwell' },
+      { gas: 1980, gyro: 15, state: 'LEAK SUSPECTED', zone: 'Approaching Joint D' },
+      { gas: 2850, gyro: 4,  state: 'HIGH HAZARD', zone: 'Joint D (LEAK DETECTED)' },
+      { gas: 3100, gyro: 2,  state: 'HIGH HAZARD', zone: 'Joint D Peak Leak' },
+      { gas: 2400, gyro: 45, state: 'HIGH HAZARD', zone: 'Emergency Backstep' },
+      { gas: 1450, gyro: 30, state: 'LEAK SUSPECTED', zone: 'Moving Away to E' },
+      { gas: 620, gyro: 10, state: 'SAFE', zone: 'Joint E Dwell' }
+    ];
+
+    function applyTelemetryData(gas, gyro, state, zone) {
+      document.getElementById('liveGasVal').textContent = Math.round(gas);
+      const pct = Math.min(100, Math.max(5, (gas / 3500) * 100));
+      document.getElementById('gasProgressBar').style.width = `${pct}%`;
+      document.getElementById('liveGyroVal').textContent = parseFloat(gyro).toFixed(1);
+      document.getElementById('probZoneDisplay').textContent = zone;
+
+      // Update Chart
+      gasChart.data.datasets[0].data.shift();
+      gasChart.data.datasets[0].data.push(gas);
+      gasChart.update('none');
+
+      // Update current trainee in local memory
+      const curT = trainees.find(x => x.id === selectedTraineeId);
+      if (curT) {
+        curT.gas = Math.round(gas);
+        curT.state = state;
+        renderTraineeCards();
+      }
+
+      // Update badges
+      const gasPill = document.getElementById('gasPill');
+      const gasProgressBar = document.getElementById('gasProgressBar');
+      const aiStateDisplay = document.getElementById('aiStateDisplay');
+      const aiStateDetail = document.getElementById('aiStateDetail');
+      const hazardBanner = document.getElementById('hazardBanner');
+      const jointD = document.getElementById('jointD');
+      const jointDPeakBadge = document.getElementById('jointDPeakBadge');
+
+      if (state === 'SAFE') {
+        gasPill.className = 'text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800';
+        gasPill.textContent = 'SAFE';
+        gasProgressBar.className = 'bg-emerald-500 h-2 rounded-full transition-all duration-300';
+        aiStateDisplay.className = 'text-xl font-bold text-emerald-400 mt-1';
+        aiStateDisplay.textContent = 'SAFE AMBIENT';
+        aiStateDetail.textContent = 'Gas response within typical baseline';
+        hazardBanner.classList.add('hidden');
+        jointD.className = 'bg-slate-800/80 rounded-xl p-3 border border-slate-700 flex flex-col items-center text-center';
+        jointDPeakBadge.classList.add('hidden');
+      } else if (state === 'GAS DETECTED') {
+        gasPill.className = 'text-xs px-2.5 py-0.5 rounded-full font-semibold bg-yellow-950 text-yellow-400 border border-yellow-800';
+        gasPill.textContent = 'GAS DETECTED';
+        gasProgressBar.className = 'bg-yellow-500 h-2 rounded-full transition-all duration-300';
+        aiStateDisplay.className = 'text-xl font-bold text-yellow-400 mt-1';
+        aiStateDisplay.textContent = 'GAS ELEVATED';
+        aiStateDetail.textContent = 'Slow haptic warning active on wearable';
+        hazardBanner.classList.add('hidden');
+      } else if (state === 'LEAK SUSPECTED') {
+        gasPill.className = 'text-xs px-2.5 py-0.5 rounded-full font-semibold bg-orange-950 text-orange-400 border border-orange-800';
+        gasPill.textContent = 'LEAK SUSPECTED';
+        gasProgressBar.className = 'bg-orange-500 h-2 rounded-full transition-all duration-300';
+        aiStateDisplay.className = 'text-xl font-bold text-orange-400 mt-1';
+        aiStateDisplay.textContent = 'LEAK CONVERGENCE';
+        aiStateDetail.textContent = 'Sharp rise detected. Slow down sweep.';
+        hazardBanner.classList.add('hidden');
+      } else if (state === 'HIGH HAZARD') {
+        gasPill.className = 'text-xs px-2.5 py-0.5 rounded-full font-semibold bg-red-950 text-red-400 border border-red-800 pulse-danger';
+        gasPill.textContent = 'HIGH HAZARD';
+        gasProgressBar.className = 'bg-red-500 h-2 rounded-full transition-all duration-300';
+        aiStateDisplay.className = 'text-xl font-bold text-red-500 mt-1';
+        aiStateDisplay.textContent = 'CRITICAL HAZARD';
+        aiStateDetail.textContent = 'Audible buzzer + continuous haptic warning';
+        hazardBanner.classList.remove('hidden');
+        jointD.className = 'bg-red-950/40 rounded-xl p-3 border-2 border-red-500 flex flex-col items-center text-center shadow-lg shadow-red-500/20';
+        jointDPeakBadge.classList.remove('hidden');
+      }
+    }
+
+    function updateSimulationStep() {
+      const point = scanSequence[simStep % scanSequence.length];
+      simStep++;
+      applyTelemetryData(point.gas, point.gyro, point.state, point.zone);
+    }
+
+    const simToggleBtn = document.getElementById('simToggleBtn');
+    const simBtnText = document.getElementById('simBtnText');
+
+    simToggleBtn.addEventListener('click', () => {
+      isRunning = !isRunning;
+      if (isRunning) {
+        simBtnText.textContent = 'Pause Simulator';
+        simToggleBtn.className = 'px-3 py-1.5 bg-gradient-to-r from-amber-600 to-orange-500 text-white font-medium text-xs rounded-lg shadow-md transition flex items-center gap-1.5';
+        timerId = setInterval(updateSimulationStep, 1000);
+      } else {
+        simBtnText.textContent = 'Start Simulator';
+        simToggleBtn.className = 'px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-500 text-white font-medium text-xs rounded-lg shadow-md transition flex items-center gap-1.5';
+        clearInterval(timerId);
+      }
+    });
+
+    // Auto-start simulator on open
+    setTimeout(() => simToggleBtn.click(), 400);
+
+    // CSV Export
+    document.getElementById('exportCsvBtn').addEventListener('click', () => {
+      let csvContent = "data:text/csv;charset=utf-8,Trainee_ID,Trainee_Name,Score,Status,MQ6_ADC,State\n";
+      trainees.forEach(t => {
+        csvContent += `${t.id},"${t.name}",${t.score},"${t.status}",${t.gas},"${t.state}"\n`;
+      });
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "AeroGuard_Classroom_Session.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+  </script>
+</body>
+</html>
